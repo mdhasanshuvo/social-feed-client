@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/axiosInstance';
 import { useAuth } from '../context/AuthContext';
 
@@ -19,6 +19,10 @@ const FeedPage = () => {
   const [commentInputs, setCommentInputs] = useState({});
   const [replyInputs, setReplyInputs] = useState({});
   const [timelineMenuOpen, setTimelineMenuOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const fileInputRef = useRef(null);
+  const profileMenuRef = useRef(null);
 
   const firstName = useMemo(() => user?.firstName || 'Dylan', [user]);
   const fullName = useMemo(() => {
@@ -46,6 +50,19 @@ const FeedPage = () => {
     fetchFeed();
   }, []);
 
+  useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (!profileMenuRef.current?.contains(event.target)) {
+        setProfileMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, []);
+
   const handleCreatePost = async (event) => {
     event.preventDefault();
 
@@ -70,6 +87,49 @@ const FeedPage = () => {
       setError(err.response?.data?.message || 'Could not create post');
     }
   };
+
+  const handleImageUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      setIsUploadingImage(true);
+      setError('');
+
+      const formData = new FormData();
+      formData.append('image', file);
+
+      const response = await api.post('/posts/upload-image', formData);
+      const imageUrl = response.data?.data?.imageUrl;
+
+      if (!imageUrl) {
+        throw new Error('No image URL returned');
+      }
+
+      setPostForm((prev) => ({ ...prev, image: imageUrl }));
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not upload image');
+    } finally {
+      setIsUploadingImage(false);
+      event.target.value = '';
+    }
+  };
+
+  const getLikedByText = (likes = []) => {
+    if (!likes.length) {
+      return '';
+    }
+
+    return likes
+      .map((item) => `${item.user?.firstName || ''} ${item.user?.lastName || ''}`.trim())
+      .filter(Boolean)
+      .join(', ');
+  };
+
+  const draftText = postForm.text.trim();
+  const hasDraftPreview = Boolean(draftText || postForm.image);
 
   const togglePostLike = async (postId) => {
     await api.patch(`/posts/${postId}/likes`);
@@ -184,26 +244,43 @@ const FeedPage = () => {
                   </a>
                 </li>
               </ul>
-              <div className="_header_nav_profile">
+              <div className="_header_nav_profile sf-profile-menu" ref={profileMenuRef}>
                 <div className="_header_nav_profile_image">
                   <img src="/assets/images/profile.png" alt="Image" className="_nav_profile_img" />
                 </div>
                 <div className="_header_nav_dropdown">
-                  <p className="_header_nav_para">{fullName}</p>
-                  <button id="_profile_drop_show_btn" className="_header_nav_dropdown_btn _dropdown_toggle" type="button" onClick={() => setTimelineMenuOpen((value) => !value)}>
+                  <button
+                    id="_profile_drop_show_btn"
+                    className="sf-profile-trigger"
+                    type="button"
+                    onClick={() => setProfileMenuOpen((value) => !value)}
+                    aria-expanded={profileMenuOpen}
+                    aria-label="Open profile menu"
+                  >
+                    <span className="_header_nav_para">{fullName}</span>
                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" fill="none" viewBox="0 0 10 6">
                       <path fill="#112032" d="M5 5l.354.354L5 5.707l-.354-.353L5 5zm4.354-3.646l-4 4-.708-.708 4-4 .708.708zm-4.708 4l-4-4 .708-.708 4 4-.708.708z" />
                     </svg>
                   </button>
                 </div>
-                <div id="_prfoile_drop" className={`_nav_profile_dropdown _profile_dropdown ${timelineMenuOpen ? 'show' : ''}`}>
-                  <div className="_nav_profile_dropdown_info">
-                    <div className="_nav_profile_dropdown_image">
-                      <img src="/assets/images/profile.png" alt="Image" className="_nav_drop_img" />
+                <div id="_prfoile_drop" className={`_nav_profile_dropdown _profile_dropdown ${profileMenuOpen ? 'show' : ''}`}>
+                  <div className="_nav_profile_dropdown_info sf-profile-dropdown-inner">
+                    <div className="_nav_profile_dropdown_image sf-profile-dropdown-avatar">
+                      <img src="/assets/images/profile.png" alt="Profile" className="_nav_drop_img" />
                     </div>
                     <div className="_nav_profile_dropdown_info_txt">
                       <h4 className="_nav_dropdown_title">{fullName}</h4>
-                      <button type="button" className="_nav_drop_profile" onClick={logout}>Logout</button>
+                      <p className="sf-profile-dropdown-subtitle">Account settings</p>
+                      <button
+                        type="button"
+                        className="_nav_drop_profile sf-profile-logout"
+                        onClick={() => {
+                          setProfileMenuOpen(false);
+                          logout();
+                        }}
+                      >
+                        Logout
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -442,26 +519,71 @@ const FeedPage = () => {
                       </div>
                     </div>
 
-                    <div className="_feed_inner_text_area _b_radious6 _padd_b24 _padd_t24 _padd_r24 _padd_l24 _mar_b16">
+                    <form className="_feed_inner_text_area _b_radious6 _padd_b24 _padd_t24 _padd_r24 _padd_l24 _mar_b16" onSubmit={handleCreatePost}>
                       <div className="_feed_inner_text_area_box">
                         <div className="_feed_inner_text_area_box_image">
                           <img src="/assets/images/txt_img.png" alt="Image" className="_txt_img" />
                         </div>
                         <div className="form-floating _feed_inner_text_area_box_form">
-                          <textarea className="form-control _textarea" placeholder="Leave a comment here" id="floatingTextarea" />
+                          <textarea
+                            className="form-control _textarea"
+                            placeholder="Leave a comment here"
+                            id="floatingTextarea"
+                            value={postForm.text}
+                            onChange={(e) => setPostForm((prev) => ({ ...prev, text: e.target.value }))}
+                          />
                           <label className="_feed_textarea_label" htmlFor="floatingTextarea">Write something ...</label>
                         </div>
                       </div>
-                      <div className="_feed_inner_text_area_bottom">
-                        <div className="_feed_inner_text_area_item">
-                          <div className="_feed_inner_text_area_bottom_photo _feed_common"><button type="button" className="_feed_inner_text_area_bottom_photo_link"><span className="_feed_inner_text_area_bottom_photo_iamge _mar_img">Photo</span></button></div>
-                          <div className="_feed_inner_text_area_bottom_video _feed_common"><button type="button" className="_feed_inner_text_area_bottom_photo_link"><span className="_feed_inner_text_area_bottom_photo_iamge _mar_img">Video</span></button></div>
-                          <div className="_feed_inner_text_area_bottom_event _feed_common"><button type="button" className="_feed_inner_text_area_bottom_photo_link"><span className="_feed_inner_text_area_bottom_photo_iamge _mar_img">Event</span></button></div>
-                          <div className="_feed_inner_text_area_bottom_article _feed_common"><button type="button" className="_feed_inner_text_area_bottom_photo_link"><span className="_feed_inner_text_area_bottom_photo_iamge _mar_img">Article</span></button></div>
+                      {hasDraftPreview ? (
+                        <div className="sf-post-preview">
+                          <div className="sf-post-preview-head">
+                            <div className="sf-post-preview-author">
+                              <img src="/assets/images/post_img.png" alt="Preview author" />
+                              <div>
+                                <h5>{fullName}</h5>
+                                <p>{postForm.visibility === 'private' ? 'Private audience' : 'Public audience'}</p>
+                              </div>
+                            </div>
+                            {postForm.image ? (
+                              <button type="button" className="sf-post-preview-remove" onClick={() => setPostForm((prev) => ({ ...prev, image: '' }))}>
+                                Remove image
+                              </button>
+                            ) : null}
+                          </div>
+                          {draftText ? <p className="sf-post-preview-text">{draftText}</p> : null}
+                          {postForm.image ? (
+                            <div className="sf-post-preview-media">
+                              <img src={postForm.image} alt="Uploaded preview" />
+                            </div>
+                          ) : null}
                         </div>
-                        <div className="_feed_inner_text_area_btn"><button type="button" className="_feed_inner_text_area_btn_link"><span>Post</span></button></div>
+                      ) : null}
+                      <div className="_feed_inner_text_area_bottom">
+                        <div className="sf-composer-photo-wrap">
+                          <button
+                            type="button"
+                            className="sf-composer-photo-btn"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isUploadingImage}
+                          >
+                            <span>{isUploadingImage ? 'Uploading image...' : postForm.image ? 'Change image' : 'Add image'}</span>
+                          </button>
+                        </div>
+                        <div className="sf-post-composer-controls">
+                          <select
+                            value={postForm.visibility}
+                            onChange={(e) => setPostForm((prev) => ({ ...prev, visibility: e.target.value }))}
+                            className="sf-visibility-select"
+                          >
+                            <option value="public">Public</option>
+                            <option value="private">Private</option>
+                          </select>
+                          <div className="_feed_inner_text_area_btn"><button type="submit" className="_feed_inner_text_area_btn_link" disabled={isUploadingImage}><span>Post</span></button></div>
+                        </div>
                       </div>
-                    </div>
+                      <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: 'none' }} />
+                    </form>
 
                     {loading ? <p>Loading feed...</p> : null}
                     {error ? <p style={{ color: '#ff4d4f' }}>{error}</p> : null}
@@ -516,6 +638,9 @@ const FeedPage = () => {
                               <img src="/assets/images/react_img5.png" alt="Image" className="_react_img _rect_img_mbl_none" />
                               <p className="_feed_inner_timeline_total_reacts_para">{post.likes?.length || 0}+</p>
                             </div>
+                            {post.likes?.length ? (
+                              <div className="sf-liked-by">Liked by: {getLikedByText(post.likes)}</div>
+                            ) : null}
                             <div className="_feed_inner_timeline_total_reacts_txt">
                               <p className="_feed_inner_timeline_total_reacts_para1"><span>{post.comments?.length || 0}</span> Comment</p>
                               <p className="_feed_inner_timeline_total_reacts_para2"><span>{Math.max(0, (post.likes?.length || 0) - 1)}</span> Share</p>
@@ -531,54 +656,87 @@ const FeedPage = () => {
                           </div>
 
                           <div className="_feed_inner_timeline_cooment_area">
-                            <div className="_feed_inner_comment_box">
-                              <form className="_feed_inner_comment_box_form" onSubmit={(event) => event.preventDefault()}>
-                                <div className="_feed_inner_comment_box_content">
-                                  <div className="_feed_inner_comment_box_content_image"><img src="/assets/images/comment_img.png" alt="" className="_comment_img" /></div>
-                                  <div className="_feed_inner_comment_box_content_txt">
-                                    <textarea className="form-control _comment_textarea" placeholder="Write a comment" value={commentInputs[post._id] || ''} onChange={(e) => setCommentInputs((prev) => ({ ...prev, [post._id]: e.target.value }))} />
-                                  </div>
-                                </div>
-                                <div className="_feed_inner_comment_box_icon">
-                                  <button type="button" className="_feed_inner_comment_box_icon_btn" onClick={() => addComment(post._id)}>
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 16 16"><path fill="#000" fillOpacity=".46" fillRule="evenodd" d="M13.167 6.534a.5.5 0 01.5.5c0 3.061-2.35 5.582-5.333 5.837V14.5a.5.5 0 01-1 0v-1.629C4.35 12.616 2 10.096 2 7.034a.5.5 0 011 0c0 2.679 2.168 4.859 4.833 4.859 2.666 0 4.834-2.18 4.834-4.86a.5.5 0 01.5-.5zM7.833.667a3.218 3.218 0 013.208 3.22v3.126c0 1.775-1.439 3.22-3.208 3.22a3.218 3.218 0 01-3.208-3.22V3.887c0-1.776 1.44-3.22 3.208-3.22zm0 1a2.217 2.217 0 00-2.208 2.22v3.126c0 1.223.991 2.22 2.208 2.22a2.217 2.217 0 002.208-2.22V3.887c0-1.224-.99-2.22-2.208-2.22z" clipRule="evenodd" /></svg>
-                                  </button>
-                                </div>
-                              </form>
-                            </div>
-
                             {(post.comments || []).map((comment) => {
                               const commentId = comment.id || comment._id;
                               const replyKey = `${post._id}:${commentId}`;
+                              const commentLikeCount = comment.likes?.length || 0;
 
                               return (
-                                <div key={commentId} className="_feed_inner_comment_box" style={{ marginTop: '12px' }}>
-                                  <div className="_feed_inner_comment_box_form">
-                                    <div className="_feed_inner_comment_box_content">
-                                      <div className="_feed_inner_comment_box_content_image"><img src="/assets/images/comment_img.png" alt="" className="_comment_img" /></div>
-                                      <div className="_feed_inner_comment_box_content_txt" style={{ width: '100%' }}>
-                                        <div className="d-flex justify-content-between align-items-start gap-3">
-                                          <p><strong>{comment.author?.firstName} {comment.author?.lastName}</strong> {comment.text}</p>
-                                          <button type="button" className="_feed_inner_comment_box_icon_btn" onClick={() => toggleCommentLike(post._id, commentId)}>Like ({comment.likes?.length || 0})</button>
+                                <div key={commentId} className="sf-comment-thread">
+                                  <div className="sf-comment-row">
+                                    <img src="/assets/images/comment_img.png" alt="Comment avatar" className="sf-comment-avatar" />
+                                    <div className="sf-comment-main">
+                                      <div className="sf-comment-bubble">
+                                        <h5 className="sf-comment-name">{comment.author?.firstName} {comment.author?.lastName}</h5>
+                                        <p className="sf-comment-text">{comment.text}</p>
+                                      </div>
+                                      <div className="sf-comment-actions">
+                                        <button type="button" onClick={() => toggleCommentLike(post._id, commentId)}>Like</button>
+                                        <span>Reply</span>
+                                        <span>Share</span>
+                                        <span className="sf-comment-time">.21m</span>
+                                      </div>
+                                      {commentLikeCount > 0 ? (
+                                        <div className="sf-comment-reactions">
+                                          <span>👍</span>
+                                          <strong>{commentLikeCount}</strong>
                                         </div>
-                                        <div className="d-flex flex-column gap-2 _mar_t8">
-                                          {(comment.replies || []).map((reply) => (
-                                            <div key={reply._id} style={{ marginLeft: '20px' }}>
-                                              <p><strong>{reply.author?.firstName} {reply.author?.lastName}</strong> {reply.text}</p>
-                                              <button type="button" className="_feed_inner_comment_box_icon_btn" onClick={() => toggleReplyLike(post._id, commentId, reply._id)}>Like ({reply.likes?.length || 0})</button>
-                                            </div>
-                                          ))}
-                                        </div>
-                                        <div className="row _mar_t8">
-                                          <div className="col-9"><input type="text" className="form-control _social_login_input" placeholder="Reply" value={replyInputs[replyKey] || ''} onChange={(e) => setReplyInputs((prev) => ({ ...prev, [replyKey]: e.target.value }))} /></div>
-                                          <div className="col-3"><button type="button" className="_feed_inner_comment_box_icon_btn" onClick={() => addReply(post._id, commentId)}>Reply</button></div>
-                                        </div>
+                                      ) : null}
+                                      {commentLikeCount > 0 ? (
+                                        <p className="sf-liked-by sf-liked-by-comment">Liked by: {getLikedByText(comment.likes)}</p>
+                                      ) : null}
+
+                                      <div className="sf-reply-list">
+                                        {(comment.replies || []).map((reply) => {
+                                          const replyLikedByText = getLikedByText(reply.likes);
+
+                                          return (
+                                          <div key={reply._id} className="sf-reply-item">
+                                            <p><strong>{reply.author?.firstName} {reply.author?.lastName}</strong> {reply.text}</p>
+                                            <button type="button" className="sf-reply-like" onClick={() => toggleReplyLike(post._id, commentId, reply._id)}>
+                                              Like ({reply.likes?.length || 0})
+                                            </button>
+                                            {replyLikedByText ? <p className="sf-liked-by sf-liked-by-reply">Liked by: {replyLikedByText}</p> : null}
+                                          </div>
+                                          );
+                                        })}
+                                      </div>
+
+                                      <div className="sf-reply-input-row">
+                                        <input
+                                          type="text"
+                                          className="form-control _social_login_input"
+                                          placeholder="Write a reply"
+                                          value={replyInputs[replyKey] || ''}
+                                          onChange={(e) => setReplyInputs((prev) => ({ ...prev, [replyKey]: e.target.value }))}
+                                        />
+                                        <button type="button" className="sf-reply-send" onClick={() => addReply(post._id, commentId)}>
+                                          Reply
+                                        </button>
                                       </div>
                                     </div>
                                   </div>
                                 </div>
                               );
                             })}
+
+                            <form className="sf-comment-input-wrap" onSubmit={(event) => event.preventDefault()}>
+                              <img src="/assets/images/comment_img.png" alt="Your avatar" className="sf-comment-input-avatar" />
+                              <div className="sf-comment-input-shell">
+                                <input
+                                  type="text"
+                                  className="sf-comment-input"
+                                  placeholder="Write a comment"
+                                  value={commentInputs[post._id] || ''}
+                                  onChange={(e) => setCommentInputs((prev) => ({ ...prev, [post._id]: e.target.value }))}
+                                />
+                                <div className="sf-comment-input-icons">
+                                  <button type="button" aria-label="Voice input">🎤</button>
+                                  <button type="button" aria-label="Attach image">🖼️</button>
+                                  <button type="button" aria-label="Post comment" onClick={() => addComment(post._id)}>➤</button>
+                                </div>
+                              </div>
+                            </form>
                           </div>
                         </div>
                       );

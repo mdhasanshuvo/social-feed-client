@@ -13,7 +13,10 @@ const FeedPage = () => {
   const { user, logout } = useAuth();
 
   const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [isRefreshingFeed, setIsRefreshingFeed] = useState(false);
+  const [activeAction, setActiveAction] = useState('');
+  const [isCreatingPost, setIsCreatingPost] = useState(false);
   const [error, setError] = useState('');
   const [postForm, setPostForm] = useState({ text: '', image: '', visibility: 'public' });
   const [commentInputs, setCommentInputs] = useState({});
@@ -34,16 +37,24 @@ const FeedPage = () => {
     return 'Dylan Field';
   }, [user]);
 
-  const fetchFeed = async () => {
+  const fetchFeed = async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (silent) {
+        setIsRefreshingFeed(true);
+      } else {
+        setLoading(true);
+      }
       setError('');
       const response = await api.get('/posts');
       setPosts(response.data.data || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load feed');
     } finally {
-      setLoading(false);
+      if (silent) {
+        setIsRefreshingFeed(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -75,7 +86,12 @@ const FeedPage = () => {
       return;
     }
 
+    if (isCreatingPost || activeAction) {
+      return;
+    }
+
     try {
+      setIsCreatingPost(true);
       const payload = {
         text: postForm.text,
         visibility: postForm.visibility
@@ -87,9 +103,11 @@ const FeedPage = () => {
 
       await api.post('/posts', payload);
       setPostForm({ text: '', image: '', visibility: 'public' });
-      await fetchFeed();
+      await fetchFeed({ silent: true });
     } catch (err) {
       setError(err.response?.data?.message || 'Could not create post');
+    } finally {
+      setIsCreatingPost(false);
     }
   };
 
@@ -183,9 +201,28 @@ const FeedPage = () => {
   const draftText = postForm.text.trim();
   const hasDraftPreview = Boolean(draftText || postForm.image);
 
+  const runFeedAction = async (actionKey, action, errorMessage) => {
+    if (activeAction || isCreatingPost) {
+      return;
+    }
+
+    try {
+      setActiveAction(actionKey);
+      setError('');
+      await action();
+      await fetchFeed({ silent: true });
+    } catch (err) {
+      setError(err.response?.data?.message || errorMessage);
+    } finally {
+      setActiveAction('');
+    }
+  };
+
+  const isActionActive = (actionKey) => activeAction === actionKey;
+  const hasActiveAction = Boolean(activeAction);
+
   const togglePostLike = async (postId) => {
-    await api.patch(`/posts/${postId}/likes`);
-    await fetchFeed();
+    await runFeedAction(`post-like-${postId}`, () => api.patch(`/posts/${postId}/likes`), 'Could not update post like');
   };
 
   const addComment = async (postId) => {
@@ -194,14 +231,22 @@ const FeedPage = () => {
       return;
     }
 
-    await api.post(`/posts/${postId}/comments`, { text });
-    setCommentInputs((prev) => ({ ...prev, [postId]: '' }));
-    await fetchFeed();
+    await runFeedAction(
+      `comment-add-${postId}`,
+      async () => {
+        await api.post(`/posts/${postId}/comments`, { text });
+        setCommentInputs((prev) => ({ ...prev, [postId]: '' }));
+      },
+      'Could not add comment'
+    );
   };
 
   const toggleCommentLike = async (postId, commentId) => {
-    await api.patch(`/posts/${postId}/comments/${commentId}/likes`);
-    await fetchFeed();
+    await runFeedAction(
+      `comment-like-${commentId}`,
+      () => api.patch(`/posts/${postId}/comments/${commentId}/likes`),
+      'Could not update comment like'
+    );
   };
 
   const addReply = async (postId, commentId) => {
@@ -211,14 +256,22 @@ const FeedPage = () => {
       return;
     }
 
-    await api.post(`/posts/${postId}/comments/${commentId}/replies`, { text });
-    setReplyInputs((prev) => ({ ...prev, [key]: '' }));
-    await fetchFeed();
+    await runFeedAction(
+      `reply-add-${key}`,
+      async () => {
+        await api.post(`/posts/${postId}/comments/${commentId}/replies`, { text });
+        setReplyInputs((prev) => ({ ...prev, [key]: '' }));
+      },
+      'Could not add reply'
+    );
   };
 
   const toggleReplyLike = async (postId, commentId, replyId) => {
-    await api.patch(`/posts/${postId}/comments/${commentId}/replies/${replyId}/likes`);
-    await fetchFeed();
+    await runFeedAction(
+      `reply-like-${replyId}`,
+      () => api.patch(`/posts/${postId}/comments/${commentId}/replies/${replyId}/likes`),
+      'Could not update reply like'
+    );
   };
 
   return (
@@ -528,13 +581,22 @@ const FeedPage = () => {
                             <option value="public">Public</option>
                             <option value="private">Private</option>
                           </select>
-                          <div className="_feed_inner_text_area_btn"><button type="submit" className="_feed_inner_text_area_btn_link" disabled={isUploadingImage}><span>Post</span></button></div>
+                          <div className="_feed_inner_text_area_btn">
+                            <button
+                              type="submit"
+                              className="_feed_inner_text_area_btn_link"
+                              disabled={isUploadingImage || isCreatingPost || hasActiveAction}
+                            >
+                              <span>{isCreatingPost ? 'Posting...' : 'Post'}</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                       <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: 'none' }} />
                     </form>
 
-                    {loading ? <p>Loading feed...</p> : null}
+                    {loading ? <div className="sf-feed-loader">Loading feed...</div> : null}
+                    {isRefreshingFeed ? <div className="sf-feed-status">Updating feed...</div> : null}
                     {error ? <p style={{ color: '#ff4d4f' }}>{error}</p> : null}
 
                     {posts.map((post) => {
@@ -581,8 +643,15 @@ const FeedPage = () => {
                           </div>
 
                           <div className="_feed_inner_timeline_reaction">
-                            <button type="button" className="_feed_inner_timeline_reaction_emoji _feed_reaction _feed_reaction_active" onClick={() => togglePostLike(post._id)}>
-                              <span className="_feed_inner_timeline_reaction_link"><span>Like</span></span>
+                            <button
+                              type="button"
+                              className="_feed_inner_timeline_reaction_emoji _feed_reaction _feed_reaction_active"
+                              onClick={() => togglePostLike(post._id)}
+                              disabled={hasActiveAction || isCreatingPost}
+                            >
+                              <span className="_feed_inner_timeline_reaction_link">
+                                <span>{isActionActive(`post-like-${post._id}`) ? 'Liking...' : 'Like'}</span>
+                              </span>
                             </button>
                             <button type="button" className="_feed_inner_timeline_reaction_comment _feed_reaction"><span className="_feed_inner_timeline_reaction_link"><span>Comment</span></span></button>
                           </div>
@@ -603,7 +672,13 @@ const FeedPage = () => {
                                         <p className="sf-comment-text">{comment.text}</p>
                                       </div>
                                       <div className="sf-comment-actions">
-                                        <button type="button" onClick={() => toggleCommentLike(post._id, commentId)}>Like</button>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleCommentLike(post._id, commentId)}
+                                          disabled={hasActiveAction || isCreatingPost}
+                                        >
+                                          {isActionActive(`comment-like-${commentId}`) ? 'Liking...' : 'Like'}
+                                        </button>
                                         <button type="button" onClick={() => focusReplyInput(replyKey)}>Reply</button>
                                         <span className="sf-comment-time">.{formatRelativeTime(comment.createdAt)}</span>
                                       </div>
@@ -628,8 +703,13 @@ const FeedPage = () => {
                                             </div>
                                             <p>{reply.text}</p>
                                             <div className="sf-reply-actions">
-                                              <button type="button" className="sf-reply-like" onClick={() => toggleReplyLike(post._id, commentId, reply._id)}>
-                                                Like
+                                              <button
+                                                type="button"
+                                                className="sf-reply-like"
+                                                onClick={() => toggleReplyLike(post._id, commentId, reply._id)}
+                                                disabled={hasActiveAction || isCreatingPost}
+                                              >
+                                                {isActionActive(`reply-like-${reply._id}`) ? 'Liking...' : 'Like'}
                                               </button>
                                               {reply.likes?.length ? (
                                                 <button
@@ -655,8 +735,13 @@ const FeedPage = () => {
                                           value={replyInputs[replyKey] || ''}
                                           onChange={(e) => setReplyInputs((prev) => ({ ...prev, [replyKey]: e.target.value }))}
                                         />
-                                        <button type="button" className="sf-reply-send" onClick={() => addReply(post._id, commentId)}>
-                                          Reply
+                                        <button
+                                          type="button"
+                                          className="sf-reply-send"
+                                          onClick={() => addReply(post._id, commentId)}
+                                          disabled={hasActiveAction || isCreatingPost}
+                                        >
+                                          {isActionActive(`reply-add-${replyKey}`) ? 'Sending...' : 'Reply'}
                                         </button>
                                       </div>
                                     </div>
@@ -675,8 +760,13 @@ const FeedPage = () => {
                                   value={commentInputs[post._id] || ''}
                                   onChange={(e) => setCommentInputs((prev) => ({ ...prev, [post._id]: e.target.value }))}
                                 />
-                                <button type="button" className="sf-comment-submit" onClick={() => addComment(post._id)}>
-                                  Comment
+                                <button
+                                  type="button"
+                                  className="sf-comment-submit"
+                                  onClick={() => addComment(post._id)}
+                                  disabled={hasActiveAction || isCreatingPost}
+                                >
+                                  {isActionActive(`comment-add-${post._id}`) ? 'Sending...' : 'Comment'}
                                 </button>
                               </div>
                             </form>
